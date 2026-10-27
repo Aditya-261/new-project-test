@@ -18,6 +18,8 @@
 import { ObjectTracker } from "../vision/tracker.js";
 import { CorridorModel } from "../navigation/corridorModel.js";
 import { FreeSpaceEstimator } from "../perception/freeSpace.js";
+import { DistanceEstimator } from "../perception/distanceEstimator.js";
+import { StructuralDetector } from "../perception/structuralDetector.js";
 import { RiskEngine } from "../navigation/riskEngine.js";
 import { PathScoreEngine } from "../navigation/pathScoring.js";
 import { DecisionEngine } from "../navigation/decisionEngine.js";
@@ -28,17 +30,22 @@ const CLASS_INDEX = new Map(COCO_CLASSES.map((name, i) => [name, i]));
 
 /**
  * Normalise a scripted detection into the shape the tracker expects.
- * Accepts either `box` or the legacy `boundingBox` key.
+ * Accepts either `box` or the legacy `boundingBox` key. Structural fields are
+ * preserved when a scenario scripts a wall/barrier directly.
  */
-export function makeDetection({ label, confidence = 0.8, box, boundingBox, visibility = 1 }) {
+export function makeDetection({ label, confidence = 0.8, box, boundingBox, visibility = 1, structural = false, boundaryY = null, structuralEvidence = null }) {
     const b = box || boundingBox;
-    return {
+    const normalised = {
         label: String(label).toLowerCase(),
         classId: CLASS_INDEX.has(String(label).toLowerCase()) ? CLASS_INDEX.get(String(label).toLowerCase()) : -1,
         confidence,
         box: [b[0], b[1], b[2], b[3]],
         visibility
     };
+    if (structural) normalised.structural = true;
+    if (Number.isFinite(boundaryY)) normalised.boundaryY = boundaryY;
+    if (structuralEvidence) normalised.structuralEvidence = structuralEvidence;
+    return normalised;
 }
 
 export class PipelineHarness {
@@ -55,6 +62,8 @@ export class PipelineHarness {
         this.tracker = new ObjectTracker();
         this.corridor = new CorridorModel();
         this.freeSpaceEstimator = new FreeSpaceEstimator();
+        this.distanceEstimator = new DistanceEstimator();
+        this.structuralDetector = new StructuralDetector();
         this.riskEngine = new RiskEngine();
         this.pathScoreEngine = new PathScoreEngine();
         this.decisionEngine = new DecisionEngine();
@@ -70,7 +79,7 @@ export class PipelineHarness {
      * @param {Array} detections scripted detections (navigation coordinates)
      * @param {{trustTracks?:boolean, qualityScore?:number,
      *          qualityAllowsDirection?:boolean, qualityRequiresStop?:boolean,
-     *          advanceMs?:number}} [ctx]
+     *          advanceMs?:number, sample?:{luma:Uint8Array,width:number,height:number}}} [ctx]
      * @returns {object} full per-frame record
      */
     step(detections = [], ctx = {}) {
@@ -79,13 +88,26 @@ export class PipelineHarness {
             qualityScore = this.qualityScore,
             qualityAllowsDirection = true,
             qualityRequiresStop = false,
-            advanceMs = this.frameIntervalMs
+            advanceMs = this.frameIntervalMs,
+            sample = null
         } = ctx;
 
         this.nowMs += advanceMs;
-        const normalised = detections.map(makeDetection);
+        const scripted = detections.map(makeDetection);
+
+        // Optional synthetic frame: run the same structural detector the live
+        // app uses. Harness samples are navigation-space, matching the rest of
+        // the harness, so no coordinate mapping is involved here.
+        const structural = sample
+            ? this.structuralDetector.update(sample, { nowMs: this.nowMs }).detections
+            : [];
+        const normalised = structural.length ? [...scripted, ...structural] : scripted;
 
         const tracked = this.tracker.update(normalised, this.nowMs, { trustTracks });
+
+        // Distances are needed by free space, risk and the object-ahead panel,
+        // so they are computed before any of those stages run.
+        this.distanceEstimator.update(tracked.tracks, this.nowMs);
 
         // Corridor adapts from the *previous* frame's free space, matching the
         // live pipeline ordering: we cannot use this frame's free space to build
@@ -160,14 +182,24 @@ export class PipelineHarness {
             },
             maxRisk: risk.maxRisk,
             primary: risk.primary
-                ? { label: risk.primary.label, risk: risk.primary.risk, distance: risk.primary.distanceCategory }
+                ? {
+                    label: risk.primary.label,
+                    risk: risk.primary.risk,
+                    distance: risk.primary.distanceCategory,
+                    meters: risk.primary.distanceMeters ?? null,
+                    structural: Boolean(risk.primary.structural)
+                }
                 : null,
+            structural: this.structuralDetector.metrics(),
+            distance: this.distanceEstimator.metrics(),
             decision: {
                 action: decision.action,
                 urgency: decision.urgency,
                 reason: decision.reason,
                 confidence: Number(decision.confidence.toFixed(3)),
-                held: Boolean(decision.held)
+                held: Boolean(decision.held),
+                primaryLabel: decision.primaryObstacle?.label || null,
+                primaryMeters: decision.primaryObstacle?.distanceMeters ?? null
             },
             speech: { spoken: Boolean(speech.speak), text: speech.text || "", verdict: speech.verdict }
         };
@@ -240,6 +272,8 @@ export class PipelineHarness {
 
     reset() {
         this.tracker.clear();
+        this.distanceEstimator.reset();
+        this.structuralDetector.reset();
         this.decisionEngine.reset();
         this.speechPolicy.reset();
         this.frames = [];

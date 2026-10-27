@@ -41,6 +41,8 @@ const METRICS = [
     { group: "Perception", key: "confirmedTracks", label: "Confirmed tracks" },
     { group: "Perception", key: "freeSpace", label: "Free space L/C/R" },
     { group: "Perception", key: "passableWidth", label: "Widest gap" },
+    { group: "Perception", key: "structural", label: "Wall / barrier" },
+    { group: "Perception", key: "distance", label: "Distance estimates" },
     { group: "Perception", key: "quality", label: "Frame quality" },
     { group: "Perception", key: "sceneEvent", label: "Scene" },
     { group: "Perception", key: "refinement", label: "Refinement stage" },
@@ -173,6 +175,8 @@ export class PerformanceDashboard {
         const q = s.quality || {};
         const cor = s.corridor || {};
         const scene = s.scene || {};
+        const str = s.structural || {};
+        const dst = s.distance || {};
         const ps = s.pathScores || null;
 
         const out = new Map();
@@ -209,6 +213,12 @@ export class PerformanceDashboard {
         set("freeSpace", fs.left !== undefined ? `${fs.left} / ${fs.center} / ${fs.right}` : null);
         set("passableWidth", fs.widestGapWidth !== undefined
             ? `${(fs.widestGapWidth * 100).toFixed(0)}% ${fs.passable ? "passable" : "TOO NARROW"}`
+            : null);
+        set("structural", str.enabled !== undefined
+            ? `${str.enabled ? "on" : "off"} · candidates ${str.candidates || 0} · ${str.label || "none"}${str.confirmed ? " confirmed" : ""}`
+            : null);
+        set("distance", dst.estimates !== undefined
+            ? `${dst.estimates} estimated · nearest ${dst.nearest ?? "--"} m`
             : null);
         set("quality", q.state ? `${q.state} ${q.score} (b${q.brightness} blur${q.blur})` : null);
         set("sceneEvent", scene.event ? `${scene.event} Δ${scene.change} shift${scene.shift}` : null);

@@ -219,7 +219,10 @@ export class DebugOverlay {
             ctx.lineTo(x + bw, y + bh);
             ctx.stroke();
 
-            const tag = `#${track.id} ${track.label} ${track.distanceCategory} r${track.risk}`;
+            const metres = Number.isFinite(track.distanceMeters)
+                ? ` ${track.distanceMeters.toFixed(1)}m`
+                : "";
+            const tag = `#${track.id} ${track.label} ${track.distanceCategory}${metres} r${track.risk}`;
             const tagWidth = ctx.measureText(tag).width + 10;
             const tagY = Math.max(0, y - fontSize - 6);
             ctx.fillStyle = COLOURS.textBg;

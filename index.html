@@ -169,6 +169,23 @@
                         <p class="action-subline" id="main-reason-subline">Press Start to begin camera guidance</p>
                     </section>
 
+                    <!--
+                        Object ahead. Deliberately separate from the action card:
+                        the action tells the user what to do, this panel tells them
+                        what is there, how far away it is estimated to be, and why
+                        that estimate should be trusted only approximately.
+                    -->
+                    <section class="object-ahead-card" id="object-ahead-panel" aria-labelledby="object-ahead-title" hidden>
+                        <div class="object-ahead-header">
+                            <h4 class="object-ahead-title" id="object-ahead-title">Object ahead</h4>
+                            <span class="object-ahead-risk" id="object-ahead-risk">Risk 0</span>
+                        </div>
+                        <p class="object-ahead-name" id="object-ahead-name">Nothing in the path</p>
+                        <p class="object-ahead-direction" id="object-ahead-direction"></p>
+                        <p class="object-ahead-distance" id="object-ahead-distance">Distance unknown</p>
+                        <p class="object-ahead-explanation" id="object-ahead-explanation"></p>
+                    </section>
+
                     <!-- Video Viewport -->
                     <section class="camera-viewport" aria-label="Camera preview">
                         <video id="camera-video-feed" class="camera-video" playsinline muted autoplay aria-hidden="true"></video>

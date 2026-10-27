@@ -304,33 +304,137 @@ body {
     text-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
 }
 
-.action-card.action-steer {
+.action-card.action-steer,
+.action-card.action-move {
     border-color: var(--warn);
     background: rgba(245, 158, 11, 0.12);
     box-shadow: 0 8px 32px rgba(245, 158, 11, 0.25);
 }
 
-.action-card.action-steer .action-headline {
+.action-card.action-steer .action-headline,
+.action-card.action-move .action-headline {
     color: #fde047;
 }
 
-.action-card.action-proceed {
+.action-card.action-proceed,
+.action-card.action-clear {
     border-color: var(--ok);
     background: rgba(16, 185, 129, 0.1);
     box-shadow: 0 8px 32px rgba(16, 185, 129, 0.2);
 }
 
-.action-card.action-proceed .action-headline {
+.action-card.action-proceed .action-headline,
+.action-card.action-clear .action-headline {
     color: #6ee7b7;
 }
 
-.action-card.action-warn {
+.action-card.action-warn,
+.action-card.action-caution {
     border-color: var(--warn);
     background: rgba(245, 158, 11, 0.1);
 }
 
-.action-card.action-warn .action-headline {
+.action-card.action-warn .action-headline,
+.action-card.action-caution .action-headline {
     color: #fcd34d;
+}
+
+/* ------------------------------------------------------- object ahead card */
+
+.object-ahead-card {
+    padding: 18px 20px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-glass);
+}
+
+.object-ahead-card[hidden] {
+    display: none;
+}
+
+.object-ahead-card.risk-critical {
+    border-color: var(--danger);
+    background: rgba(239, 68, 68, 0.16);
+    box-shadow: 0 8px 32px rgba(239, 68, 68, 0.3);
+}
+
+.object-ahead-card.risk-high {
+    border-color: var(--warn);
+    background: rgba(245, 158, 11, 0.14);
+    box-shadow: 0 8px 32px rgba(245, 158, 11, 0.24);
+}
+
+.object-ahead-card.risk-medium {
+    border-color: rgba(245, 158, 11, 0.55);
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.object-ahead-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.object-ahead-title {
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.object-ahead-risk {
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 0.76rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.object-ahead-risk.risk-critical {
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.22);
+}
+
+.object-ahead-risk.risk-high {
+    color: #fcd34d;
+    background: rgba(245, 158, 11, 0.22);
+}
+
+.object-ahead-risk.risk-medium {
+    color: #fde68a;
+    background: rgba(245, 158, 11, 0.14);
+}
+
+.object-ahead-name {
+    margin: 8px 0 2px;
+    font-family: 'Outfit', 'Inter', sans-serif;
+    font-size: 1.55rem;
+    font-weight: 800;
+    line-height: 1.15;
+}
+
+.object-ahead-direction {
+    margin: 0;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.object-ahead-distance {
+    margin: 6px 0 0;
+    font-size: 1.02rem;
+    font-weight: 700;
+}
+
+.object-ahead-explanation {
+    margin: 8px 0 0;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--text-muted);
 }
 
 /* ------------------------------------------------------- camera viewport */

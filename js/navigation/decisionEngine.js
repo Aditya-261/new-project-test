@@ -16,6 +16,7 @@
  */
 
 import { NavigationConfig } from "../config/navigationConfig.js";
+import { isStructuralClass } from "../config/classCatalog.js";
 import { Sector } from "../perception/freeSpace.js";
 
 export const Action = Object.freeze({
@@ -168,12 +169,47 @@ export class DecisionEngine {
             ? emergent.slice().sort((a, b) => b.risk - a.risk)[0]
             : null;
 
+        /**
+         * Structural hazards get their own rule because a wall is not an
+         * object with a meaningful box area. The highest-risk track may be a
+         * chair while a wall two metres ahead is the thing that will actually
+         * stop the user, so it is selected by path overlap and distance rather
+         * than by rank alone.
+         */
+        const structuralPrimary = threats.find((track) => {
+            if (!track.structural && !isStructuralClass(track.label)) return false;
+            return (track.pathOverlap ?? 0) >= riskCfg.structuralMinPathOverlap;
+        }) || null;
+
         const leftUsable = left.passable && left.adjustedScore >= scoreCfg.blockedThreshold
             && (!left.worst || left.worst.risk < riskCfg.criticalThreshold);
         const rightUsable = right.passable && right.adjustedScore >= scoreCfg.blockedThreshold
             && (!right.worst || right.worst.risk < riskCfg.criticalThreshold);
 
         /* --- 1. Emergency STOP conditions -------------------------------- */
+
+        // A wall or barrier whose base is at arm's length, or whose estimated
+        // distance is inside the stop band, is an immediate stop. No sidestep
+        // is safe at this range, and no box-area discount is allowed to hide it.
+        if (structuralPrimary) {
+            const meters = structuralPrimary.distanceMeters;
+            const atArmsLength = structuralPrimary.bottomY >= riskCfg.structuralCriticalBottomY;
+            const insideStopBand = Number.isFinite(meters)
+                && meters <= riskCfg.structuralStopDistanceM;
+            const categoryCritical = structuralPrimary.distanceCategory === "VERY_NEAR";
+            if (atArmsLength || insideStopBand || categoryCritical) {
+                return new NavigationDecision({
+                    action: Action.STOP,
+                    urgency: Urgency.CRITICAL,
+                    reason: "structural_obstacle",
+                    confidence: 0.97,
+                    primaryObstacle: structuralPrimary,
+                    pathScores,
+                    emergency: true,
+                    timestamp: nowMs
+                });
+            }
+        }
 
         const centreCritical = center.risk >= riskCfg.criticalThreshold
             || (primary && primary.risk >= riskCfg.criticalThreshold && primary.corridorEval?.centreBlocked);
@@ -254,12 +290,36 @@ export class DecisionEngine {
             && center.risk < riskCfg.avoidThreshold;
 
         if (centreSafe) {
+            const structuralCaution = structuralPrimary
+                && (
+                    !Number.isFinite(structuralPrimary.distanceMeters)
+                    || structuralPrimary.distanceMeters <= riskCfg.structuralCautionDistanceM
+                );
+
+            // The centre can look walkable while a wall is still inside the
+            // caution band (for example a wall whose visible surface is narrow
+            // at the bottom of the frame). Never return a clear-path decision in
+            // that situation.
+            if (structuralCaution) {
+                return new NavigationDecision({
+                    action: Action.CAUTION,
+                    urgency: Urgency.MEDIUM,
+                    reason: "structural_obstacle",
+                    confidence: 0.8,
+                    primaryObstacle: structuralPrimary,
+                    pathScores,
+                    timestamp: nowMs
+                });
+            }
+
             return new NavigationDecision({
                 action: Action.CONTINUE,
                 urgency: Urgency.LOW,
                 reason: primary ? "path_clear_ahead" : "path_clear",
                 confidence: clamp(0.6 + 0.4 * qualityScore, 0, 1),
-                primaryObstacle: null,
+                // Retain a far obstacle so the object-ahead panel can show it
+                // and so "Path clear" is suppressed while it is still there.
+                primaryObstacle: primary,
                 pathScores,
                 timestamp: nowMs
             });
@@ -488,6 +548,10 @@ export class DecisionEngine {
     shouldAnnounceClear(nowMs) {
         if (!this.wasObstructed) return false;
         if (this.current.action !== Action.CONTINUE) return false;
+        // A retained obstacle means something is still ahead. "Path clear"
+        // would be a lie even though CONTINUE is the right walking action: the
+        // user is told the object is there, not that the way is empty.
+        if (this.current.primaryObstacle) return false;
         if (this.clearSince === 0) return false;
         return nowMs - this.clearSince >= this.cfg.pathClear.stabilityMs;
     }

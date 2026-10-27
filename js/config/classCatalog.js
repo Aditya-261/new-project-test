@@ -66,6 +66,27 @@ const TIER_PROPERTIES = Object.freeze({
     [HazardTier.IGNORED]: { priority: 0.0, groundAnchored: false, typicalHeightM: 0.3 }
 });
 
+/**
+ * Label-specific overrides for the tier defaults.
+ *
+ * A wall is not a generic "structure": it is a continuous surface that blocks
+ * the whole corridor, and its visible height is not a useful size prior. It
+ * gets a higher risk multiplier and a realistic height for the rare case where
+ * the height cue is used.
+ */
+const LABEL_PRIORITY = Object.freeze({
+    wall: 1.40,
+    barrier: 1.30
+});
+
+const LABEL_HEIGHT_M = Object.freeze({
+    wall: 2.4,
+    barrier: 1.1
+});
+
+/** Labels that only the structural detector can produce. */
+export const STRUCTURAL_LABELS = Object.freeze(new Set(["wall", "barrier"]));
+
 const CLASS_TIERS = new Map(Object.entries({
     // Vehicles
     car: HazardTier.VEHICLE,
@@ -87,6 +108,12 @@ const CLASS_TIERS = new Map(Object.entries({
     "fire hydrant": HazardTier.STRUCTURE,
     "parking meter": HazardTier.STRUCTURE,
     bench: HazardTier.STRUCTURE,
+    // Structural hazards synthesised by perception/structuralDetector.js. COCO
+    // has no wall or barrier class, so these labels only ever come from the
+    // classical detector. They are fixed, body-height obstructions and are
+    // deliberately treated as more urgent than a bench.
+    wall: HazardTier.STRUCTURE,
+    barrier: HazardTier.STRUCTURE,
     // Furniture / indoor obstacles
     chair: HazardTier.FURNITURE,
     couch: HazardTier.FURNITURE,
@@ -142,13 +169,31 @@ export function tierForLabel(label) {
 
 /** @returns {{priority:number, groundAnchored:boolean, typicalHeightM:number, tier:string}} */
 export function classProfile(label) {
-    const tier = tierForLabel(label);
-    return { tier, ...TIER_PROPERTIES[tier] };
+    const key = label ? String(label).toLowerCase() : "";
+    const tier = tierForLabel(key);
+    const base = TIER_PROPERTIES[tier];
+    return {
+        tier,
+        priority: LABEL_PRIORITY[key] ?? base.priority,
+        groundAnchored: base.groundAnchored,
+        typicalHeightM: LABEL_HEIGHT_M[key] ?? base.typicalHeightM
+    };
 }
 
 /** Risk multiplier for a label. 0 means "drop this detection entirely". */
 export function classPriority(label) {
     return classProfile(label).priority;
+}
+
+/** Coarse real-world height prior for a label, in metres. */
+export function classHeightM(label) {
+    return classProfile(label).typicalHeightM;
+}
+
+/** True for labels only the structural (wall/barrier) detector produces. */
+export function isStructuralClass(label) {
+    if (!label) return false;
+    return STRUCTURAL_LABELS.has(String(label).toLowerCase());
 }
 
 /** True when the class is worth feeding into navigation at all. */
