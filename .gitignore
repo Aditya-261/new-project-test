@@ -53,6 +53,8 @@ data/samples/*.avi
 # Environment / secrets
 .env
 *.env
+*.pem
+models/*.pem
 
 # IDE files
 .vscode/
