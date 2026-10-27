@@ -64,6 +64,8 @@ export const SpeechConfig = {
         STOP_VERY_NEAR: "Stop. Obstacle close.",
         STOP_APPROACHING: "Stop. Object approaching.",
         STOP_VEHICLE: "Stop. Vehicle.",
+        STOP_WALL: "Stop. Wall ahead.",
+        STOP_BARRIER: "Stop. Barrier ahead.",
         STOP_UNRELIABLE: "Please stop. Vision unreliable.",
 
         MOVE_LEFT: "Move left.",
@@ -75,6 +77,8 @@ export const SpeechConfig = {
         PERSON_AHEAD: "Person ahead.",
         PERSON_CROSSING: "Person crossing.",
         VEHICLE_APPROACHING: "Vehicle approaching.",
+        WALL_AHEAD: "Wall ahead. Use caution.",
+        BARRIER_AHEAD: "Barrier ahead. Use caution.",
         CAUTION: "Obstacle ahead. Use caution.",
         NARROW: "Narrow path.",
 

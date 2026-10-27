@@ -24,7 +24,8 @@
  */
 
 import { NavigationConfig } from "../config/navigationConfig.js";
-import { classPriority } from "../config/classCatalog.js";
+import { classPriority, isStructuralClass } from "../config/classCatalog.js";
+import { metersToCategory } from "../perception/distanceEstimator.js";
 
 /**
  * Normalisation divisor.
@@ -71,6 +72,31 @@ export function estimateProximity(bottomY, area, bands = NavigationConfig.proxim
     // horizon scores near zero rather than a flat 0.22.
     const t = clamp(bottomY / Math.max(1e-6, bands.MEDIUM.minBottomY), 0, 1);
     return { category: "FAR", proximity: far.proximity * (0.35 + 0.65 * t) };
+}
+
+/**
+ * Proximity for a wall or barrier.
+ *
+ * The generic band model treats apparent area as evidence of nearness, which is
+ * exactly wrong for a wall: a wall six metres away can fill the frame from top
+ * to bottom. When a metric estimate exists it is the primary cue; the generic
+ * model is only a fallback for the first frame before the estimator has run.
+ *
+ * @returns {number} 0..1
+ */
+export function structuralProximity(track, cfg = NavigationConfig.risk, distanceCfg = NavigationConfig.distance) {
+    // Check the raw field: `Number(null)` is 0, which would turn "unknown"
+    // into "at arm's length".
+    const meters = track?.distanceMeters;
+    if (Number.isFinite(meters)) {
+        if (meters <= distanceCfg.veryNearM) return 1;
+        if (meters <= distanceCfg.nearM) return 0.90;
+        if (meters <= distanceCfg.mediumM) return 0.62;
+        const span = Math.max(1e-6, cfg.structuralNoticeDistanceM - distanceCfg.mediumM);
+        const t = clamp((meters - distanceCfg.mediumM) / span, 0, 1);
+        return 0.62 + (0.24 - 0.62) * t;
+    }
+    return estimateProximity(track.bottomY, track.area).proximity;
 }
 
 /**
@@ -130,8 +156,19 @@ export class RiskEngine {
      */
     score(track, corridorEval, corridorBounds) {
         const cfg = this.cfg;
+        const structural = Boolean(track.structural) || isStructuralClass(track.label);
+        track.structural = structural;
 
-        const { category, proximity } = estimateProximity(track.bottomY, track.area);
+        let category;
+        let proximity;
+        if (structural) {
+            proximity = structuralProximity(track, cfg);
+            category = Number.isFinite(track.distanceMeters)
+                ? metersToCategory(track.distanceMeters)
+                : estimateProximity(track.bottomY, track.area).category;
+        } else {
+            ({ category, proximity } = estimateProximity(track.bottomY, track.area));
+        }
         track.distanceCategory = category;
         track.proximity = proximity;
 
@@ -184,6 +221,34 @@ export class RiskEngine {
             risk = Math.max(risk, cfg.criticalThreshold + 2);
         }
 
+        /**
+         * Structural risk floors.
+         *
+         * A wall's risk must not be allowed to fall below the urgency its
+         * distance implies. Without this, a wall three metres ahead scores like
+         * a distant chair because its box is high in the frame, the path is
+         * declared clear, and the user walks into it. The floors only apply
+         * when the wall actually overlaps the walking corridor.
+         */
+        let structuralFloor = 0;
+        if (structural && pathTerm >= cfg.structuralMinPathOverlap) {
+            const meters = track.distanceMeters;
+            const atArmsLength = track.bottomY >= cfg.structuralCriticalBottomY;
+            if (atArmsLength || (Number.isFinite(meters) && meters <= cfg.structuralCriticalDistanceM)) {
+                structuralFloor = cfg.structuralCriticalRiskFloor;
+            } else if (Number.isFinite(meters) && meters <= cfg.structuralStopDistanceM) {
+                structuralFloor = cfg.structuralStopRiskFloor;
+            } else if (Number.isFinite(meters) && meters <= cfg.structuralCautionDistanceM) {
+                structuralFloor = cfg.structuralCautionRiskFloor;
+            } else if (Number.isFinite(meters) && meters <= cfg.structuralNoticeDistanceM) {
+                structuralFloor = cfg.structuralNoticeRiskFloor;
+            } else if (!Number.isFinite(meters)) {
+                // No estimate yet: be conservative rather than silent.
+                structuralFloor = cfg.structuralCautionRiskFloor;
+            }
+        }
+        if (structuralFloor > risk) risk = structuralFloor;
+
         track.risk = risk;
         track.riskFactors = {
             proximity: Number(proximity.toFixed(3)),
@@ -195,6 +260,7 @@ export class RiskEngine {
             approachFactor: Number(approachFactor.toFixed(3)),
             convergenceFactor: Number(converge.toFixed(3)),
             classPriority: Number(priority.toFixed(2)),
+            structuralFloor,
             ttcSeconds: Number.isFinite(ttc) ? Number(ttc.toFixed(2)) : null
         };
 

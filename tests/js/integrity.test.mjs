@@ -288,6 +288,8 @@ test("reasoning modules do not touch the DOM at import time", async () => {
         "vision/backendSelector.js",
         "vision/modelCache.js",
         "perception/freeSpace.js",
+        "perception/distanceEstimator.js",
+        "perception/structuralDetector.js",
         "perception/segmentationStage.js",
         "navigation/corridorModel.js",
         "navigation/riskEngine.js",

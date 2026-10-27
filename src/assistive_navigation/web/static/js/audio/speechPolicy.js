@@ -20,7 +20,7 @@
 
 import { SpeechConfig, SpeechPriority } from "../config/speechConfig.js";
 import { Action, Urgency } from "../navigation/decisionEngine.js";
-import { HazardTier, tierForLabel } from "../config/classCatalog.js";
+import { HazardTier, isStructuralClass, tierForLabel } from "../config/classCatalog.js";
 
 /** Why the policy chose to speak or stay silent. Surfaced on the dashboard. */
 export const SpeechVerdict = Object.freeze({
@@ -32,6 +32,16 @@ export const SpeechVerdict = Object.freeze({
     SILENT_RATE_LIMIT: "silent-rate-limit",
     EMERGENCY_BYPASS: "emergency-bypass"
 });
+
+/**
+ * Wall and barrier phrasing. Kept as a helper so the stop and caution paths
+ * cannot disagree about which label maps to which word.
+ */
+function structuralPhrase(obstacle, phrases, stop) {
+    const barrier = String(obstacle?.label || "").toLowerCase() === "barrier";
+    if (stop) return barrier ? phrases.STOP_BARRIER : phrases.STOP_WALL;
+    return barrier ? phrases.BARRIER_AHEAD : phrases.WALL_AHEAD;
+}
 
 /**
  * Map a decision to its phrase.
@@ -48,6 +58,8 @@ export const SpeechVerdict = Object.freeze({
 export function phraseForDecision(decision, phrases = SpeechConfig.phrases) {
     const obstacle = decision.primaryObstacle;
     const tier = obstacle ? tierForLabel(obstacle.label) : null;
+    const structural = isStructuralClass(obstacle?.label)
+        || decision.reason === "structural_obstacle";
 
     switch (decision.action) {
         case Action.STOP: {
@@ -56,6 +68,12 @@ export function phraseForDecision(decision, phrases = SpeechConfig.phrases) {
             }
             if (tier === HazardTier.VEHICLE) {
                 return { text: phrases.STOP_VEHICLE, priority: SpeechPriority.STOP };
+            }
+            if (structural) {
+                return {
+                    text: structuralPhrase(obstacle, phrases, true),
+                    priority: SpeechPriority.STOP
+                };
             }
             if (decision.reason === "rapid_approach") {
                 return { text: phrases.STOP_APPROACHING, priority: SpeechPriority.STOP };
@@ -86,6 +104,12 @@ export function phraseForDecision(decision, phrases = SpeechConfig.phrases) {
             }
             if (decision.reason === "narrow_path") {
                 return { text: phrases.NARROW, priority: SpeechPriority.CAUTION };
+            }
+            if (structural) {
+                return {
+                    text: structuralPhrase(obstacle, phrases, false),
+                    priority: SpeechPriority.CAUTION
+                };
             }
             if (tier === HazardTier.PERSON) {
                 // A person moving across the corridor is worth distinguishing:
@@ -191,7 +215,9 @@ export class SpeechPolicy {
         /* ------------------------------------------------------- path clear */
 
         if (decision.action === Action.CONTINUE) {
-            if (announceClear) {
+            // Defensive guard: a retained obstacle means the path is not empty,
+            // whatever the decision engine believes about stability.
+            if (announceClear && !decision.primaryObstacle) {
                 if (nowMs - this.lastSpokenAtMs < this.cfg.cooldowns.changeActionMs) {
                     this.lastVerdict = SpeechVerdict.SILENT_COOLDOWN;
                     this.counters.suppressedCooldown += 1;

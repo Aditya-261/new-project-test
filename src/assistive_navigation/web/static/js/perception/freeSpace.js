@@ -22,7 +22,7 @@
  */
 
 import { NavigationConfig } from "../config/navigationConfig.js";
-import { classPriority } from "../config/classCatalog.js";
+import { classPriority, isStructuralClass } from "../config/classCatalog.js";
 
 export const Sector = Object.freeze({
     LEFT: "LEFT",
@@ -43,6 +43,37 @@ export function bottomYToFreeDepth(bottomY, groundBandTop) {
     if (span <= 0) return 1;
     const depth = (1 - bottomY) / span;
     return depth < 0 ? 0 : (depth > 1 ? 1 : depth);
+}
+
+/**
+ * Convert a structural obstacle's estimated distance into remaining free depth.
+ *
+ * A wall is a hard obstruction, so this mapping is deliberately pessimistic
+ * compared with `bottomYToFreeDepth`. The bands come from
+ * `NavigationConfig.freeSpace.structuralDepthBands`; a missing estimate falls
+ * back to a capped depth so the column is never treated as wide open.
+ *
+ * @param {number} meters
+ * @param {object} [cfg]
+ * @returns {number} 0..1
+ */
+export function structuralDepthForMeters(meters, cfg = NavigationConfig.freeSpace) {
+    const bands = cfg.structuralDepthBands;
+    if (!Number.isFinite(meters) || !Array.isArray(bands) || bands.length === 0) {
+        return cfg.structuralFallbackDepthCap;
+    }
+    if (meters <= bands[0].meters) return bands[0].depth;
+
+    for (let i = 1; i < bands.length; i += 1) {
+        const a = bands[i - 1];
+        const b = bands[i];
+        if (meters <= b.meters) {
+            const span = Math.max(1e-6, b.meters - a.meters);
+            const t = (meters - a.meters) / span;
+            return a.depth + (b.depth - a.depth) * t;
+        }
+    }
+    return bands[bands.length - 1].depth;
 }
 
 /**
@@ -137,6 +168,8 @@ export class FreeSpaceEstimator {
             const priority = classPriority(track.label);
             if (priority <= 0) continue;
 
+            const structural = Boolean(track.structural) || isStructuralClass(track.label);
+
             // Coasted tracks still block: an object does not cease to exist
             // because one frame missed it. Their influence is scaled by the
             // decayed confidence.
@@ -145,25 +178,36 @@ export class FreeSpaceEstimator {
 
             // Above the ground band an object is either distant or overhead. A
             // very large one still matters (a bus filling the top half is not
-            // "far"), so the gate is on size as well as position.
+            // "far"), so the gate is on size as well as position. A structural
+            // surface is exempt: its distance estimate already says where it is.
             const groundVisible = track.bottomY >= cfg.groundBandTop;
-            if (!groundVisible && track.area < 0.22) continue;
+            if (!structural && !groundVisible && track.area < 0.22) continue;
 
-            let objectDepth = bottomYToFreeDepth(track.bottomY, cfg.groundBandTop);
+            let objectDepth;
+            if (structural) {
+                objectDepth = Number.isFinite(track.distanceMeters)
+                    ? structuralDepthForMeters(track.distanceMeters, cfg)
+                    : Math.min(bottomYToFreeDepth(track.bottomY, cfg.groundBandTop), cfg.structuralFallbackDepthCap);
+            } else {
+                objectDepth = bottomYToFreeDepth(track.bottomY, cfg.groundBandTop);
 
-            if (!groundVisible) {
-                // No ground contact in frame, so the vertical cue is unusable -
-                // it would report "fully open" for a wall two feet away. Fall
-                // back to apparent size: something occupying a large fraction of
-                // the frame is close, whatever its base is doing.
-                const sizeDepth = Math.max(0, Math.min(1, 1 - track.area / 0.45));
-                objectDepth = Math.min(objectDepth, sizeDepth);
+                if (!groundVisible) {
+                    // No ground contact in frame, so the vertical cue is unusable -
+                    // it would report "fully open" for a wall two feet away. Fall
+                    // back to apparent size: something occupying a large fraction of
+                    // the frame is close, whatever its base is doing.
+                    const sizeDepth = Math.max(0, Math.min(1, 1 - track.area / 0.45));
+                    objectDepth = Math.min(objectDepth, sizeDepth);
+                }
             }
 
             // Widen the footprint slightly: a real object is wider than its box
             // at floor level, and clipping past an obstacle by 2 cm is not a
-            // manoeuvre we should recommend.
-            const margin = 0.015 + 0.05 * (1 - objectDepth);
+            // manoeuvre we should recommend. A wall gets a wider footprint
+            // because its box describes the visible surface, not the full wall.
+            const margin = structural
+                ? cfg.structuralMargin + 0.04 * (1 - objectDepth)
+                : 0.015 + 0.05 * (1 - objectDepth);
             const x1 = Math.max(0, track.box[0] - margin);
             const x2 = Math.min(1, track.box[2] + margin);
 
@@ -173,8 +217,11 @@ export class FreeSpaceEstimator {
             // Confidence and hazard class modulate how much depth is taken.
             // A tentative detection reduces free depth partially rather than
             // slamming the column shut, which is what makes the grid tolerate
-            // detector flicker.
-            const strength = Math.min(1, evidence * Math.min(1.4, priority));
+            // detector flicker. Structural surfaces are kept strong even at
+            // modest confidence: a wall is either there or it is not.
+            const strength = structural
+                ? Math.min(1, Math.max(0.85, evidence * Math.min(1.4, priority)))
+                : Math.min(1, evidence * Math.min(1.4, priority));
             const effectiveDepth = objectDepth + (1 - objectDepth) * (1 - strength);
 
             for (let c = startCol; c < endCol; c += 1) {

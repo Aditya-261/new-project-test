@@ -30,7 +30,14 @@
  */
 
 import { VisionConfig } from "../config/visionConfig.js";
-import { classProfile, isDynamicClass, HazardTier, UNKNOWN_OBSTACLE_LABEL } from "../config/classCatalog.js";
+import { NavigationConfig } from "../config/navigationConfig.js";
+import {
+    classProfile,
+    isDynamicClass,
+    isStructuralClass,
+    HazardTier,
+    UNKNOWN_OBSTACLE_LABEL
+} from "../config/classCatalog.js";
 import { iou } from "./decoders.js";
 
 /** Euclidean distance between two normalised centres. */
@@ -55,6 +62,13 @@ export class Track {
         this.tier = profile.tier;
         this.groundAnchored = profile.groundAnchored;
         this.dynamic = isDynamicClass(detection.label);
+        /**
+         * A structural track comes from the classical wall/barrier detector,
+         * not from COCO. It needs different distance and risk rules: a wall is
+         * a continuous surface, so its box area says very little about how far
+         * away it is.
+         */
+        this.structural = Boolean(detection.structural) || isStructuralClass(detection.label);
 
         /** Smoothed box, [x1,y1,x2,y2] normalised navigation coordinates. */
         this.box = detection.box.slice();
@@ -82,6 +96,12 @@ export class Track {
 
         /** Assigned by the navigation stages; declared here so the shape is stable. */
         this.distanceCategory = "UNKNOWN";
+        this.distanceMeters = null;
+        this.distanceRange = null;
+        this.distanceConfidence = 0;
+        this.distanceMethod = "none";
+        this.distanceStructural = this.structural;
+        this.distanceExplanation = "";
         this.risk = 0;
         this.pathOverlap = 0;
         this.groundContact = 0;
@@ -140,6 +160,13 @@ export class Track {
             this.tier = profile.tier;
             this.groundAnchored = profile.groundAnchored;
             this.dynamic = isDynamicClass(detection.label);
+        }
+
+        // The structural detector is the only source of wall/barrier evidence,
+        // so a label change from it must also update the flag the risk and
+        // free-space stages branch on.
+        if (detection.structural || isStructuralClass(detection.label)) {
+            this.structural = true;
         }
 
         this.velocityX = expSmooth((this.centerX - prevCentreX) / dt, this.velocityX, this.cfg.velocityAlpha);
@@ -241,7 +268,14 @@ export class Track {
             confirmed: this.confirmed,
             emergent: this.emergent,
             stability: Number(this.stability.toFixed(3)),
+            structural: Boolean(this.structural),
             distanceCategory: this.distanceCategory,
+            distanceMeters: this.distanceMeters,
+            distanceRange: this.distanceRange ? { ...this.distanceRange } : null,
+            distanceConfidence: this.distanceConfidence,
+            distanceMethod: this.distanceMethod,
+            distanceStructural: Boolean(this.distanceStructural),
+            distanceExplanation: this.distanceExplanation,
             risk: this.risk,
             pathOverlap: Number(this.pathOverlap.toFixed(3))
         };
@@ -273,6 +307,10 @@ export class ObjectTracker {
     _labelsCompatible(track, detection) {
         if (track.label === detection.label) return true;
         if (track.label === UNKNOWN_OBSTACLE_LABEL || detection.label === UNKNOWN_OBSTACLE_LABEL) return true;
+        // The structural detector may relabel one wall as `wall` in a wide view
+        // and `barrier` when part of it is clipped. That is the same surface, so
+        // the two structural labels are interchangeable.
+        if (isStructuralClass(track.label) && isStructuralClass(detection.label)) return true;
         return false;
     }
 
@@ -413,6 +451,13 @@ export class ObjectTracker {
         const large = track.area >= 0.14;
         const veryLarge = track.area >= 0.30;
         const low = track.bottomY >= 0.62;
+
+        // A wall/barrier is a surface, so box area is a poor emergency cue: a
+        // far wall can still fill the frame. Use the ground-contact line
+        // instead. Only a wall whose base is at arm's length is emergent.
+        if (track.structural) {
+            return centred && track.bottomY >= NavigationConfig.risk.structuralCriticalBottomY;
+        }
 
         if (veryLarge && centred) return true;
         if (large && centred && low) return true;

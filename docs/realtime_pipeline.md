@@ -168,17 +168,38 @@ path, matching ONNX Runtime's own guidance for CPU execution.
 
 ## 6. Perception detail
 
-### Distance is approximate, and labelled as such
+### Distance is an estimate, and is presented as one
 
 Bands are `VERY_NEAR`, `NEAR`, `MEDIUM`, `FAR`, `UNKNOWN`. The primary cue is the
 box's bottom edge (ground contact); apparent area is secondary. Either can promote
 a band, because a bus filling the frame without a visible base is still near.
-Nothing in the system claims a distance in metres, and nothing presents one to
-the user.
+
+`perception/distanceEstimator.js` also produces a metre estimate. Ground contact
+is interpolated through a calibrated anchor table, and classes with a plausible
+real-world height get an independent pinhole estimate from their apparent height.
+Every estimate carries a range and a plain-language explanation, and the UI shows
+both. A wall uses ground contact only: its visible height is usually clipped by
+the frame, so apparent height would be misleading.
 
 Where ground contact is not visible at all (`bottomY` above the ground band) the
 vertical cue is unusable — it would read "fully open" for a wall two feet away —
-so apparent size takes over.
+so apparent size takes over. Structural surfaces are exempt because their
+distance estimate already says where they are.
+
+### Walls and barriers are detected structurally
+
+COCO has no wall class, so `perception/structuralDetector.js` looks for the
+geometry of a wall/floor junction in the luminance thumbnail: a broad horizontal
+edge, a textured or vertically structured region above it, and floor below it.
+Candidates must persist across frames, except a very strong close-range wall,
+which is emitted immediately. One-row floor markings, stair/tile banding and
+featureless sky are rejected explicitly.
+
+Structural detections enter the normal tracker as synthetic `wall` / `barrier`
+labels, then flow through distance, free space, risk and decision exactly like a
+COCO detection. Their risk floors and free-space blocking are distance-based
+rather than box-area-based, and a wall inside the stop band produces STOP even
+when a box-area model would call the path clear.
 
 ### Free space is a column grid, not a bounding-box tally
 
@@ -208,9 +229,11 @@ semantics: either source may veto a column, neither may unblock one.
 refresh, measures its own cost, and disables itself if it exceeds its budget or
 starts dominating a struggling pipeline.
 
-This replaced `barrierDetector.js`, which declared a frame-filling "wall" at 0.85
-confidence whenever the centre of the image was low-texture. That fired on plain
-floors, roads and sky, and every one of those became a false STOP.
+This replaced the old `barrierDetector.js`, which declared a frame-filling "wall"
+at 0.85 confidence whenever the centre of the image was low-texture. That fired
+on plain floors, roads and sky, and every one of those became a false STOP. The
+current `structuralDetector.js` is deliberately narrower: it requires a coherent
+wall/floor boundary and rejects the patterns that fooled the old detector.
 
 ### The corridor does not chase openings
 
@@ -289,7 +312,8 @@ they need next.
 
 "Path clear." is spoken once per obstruction episode, after the path has stayed
 clear for `pathClear.stabilityMs` (1600 ms), and never when there was no
-obstruction to clear.
+obstruction to clear. It is also withheld whenever an obstacle is still retained
+ahead: CONTINUE means "keep walking", not "the way is empty".
 
 ## 9. Health, recovery and degradation
 

@@ -5,6 +5,43 @@ Format: [Phase] Date — Description
 
 ---
 
+## [Realtime] 2026-10-27 — Detect walls and barriers instead of announcing "Path clear"
+
+A COCO detector has no wall class, so a blank wall produced no detections and the
+app could announce a clear path while the user walked into one.
+
+### Structural perception
+
+- Added `perception/structuralDetector.js`, a classical wall/barrier detector that
+  works on the 64x48 luminance thumbnail. It requires a broad wall/floor boundary
+  with textured or vertically structured surface above it, confirms candidates
+  across frames, and emits a strong close-range wall immediately.
+- Floor markings, stair/tile banding and featureless sky/horizon are rejected
+  explicitly. The old `barrierDetector.js` false-STOP failure mode is not
+  reintroduced.
+- Structural detections enter the normal tracker as synthetic `wall` / `barrier`
+  labels and then flow through free space, risk and decision like any other
+  detection.
+
+### Distance and explanation
+
+- Added `perception/distanceEstimator.js`: ground-contact anchors plus apparent
+  height for classes with a plausible size. Walls use ground contact only.
+- Every estimate carries a range and a plain-language explanation of the cue and
+  its limitation. The UI shows the range rather than a single authoritative
+  number.
+
+### Safer decisions and clearer UI
+
+- Structural hazards get distance-based risk floors and free-space blocking
+  instead of box-area-based scoring. A wall inside the stop band produces STOP;
+  a medium-distance wall produces CAUTION/avoidance, never CONTINUE.
+- `CONTINUE` is still silent, but a retained obstacle suppresses "Path clear."
+- Added an object-ahead panel showing the label, direction, estimated distance
+  with range, and the explanation. The action headline reads "WALL AHEAD" /
+  "BARRIER AHEAD" / "OBJECT AHEAD" instead of "CLEAR" while something is ahead.
+- Added 24 structural/distance/UI tests; the suite now passes 290 tests.
+
 ## [Realtime] 2026-09-07 — Fix startup failure and add browser smoke testing
 
 The client shipped in the previous entry did not start. Root causes, all found by

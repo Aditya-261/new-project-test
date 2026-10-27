@@ -38,6 +38,8 @@ import { ObjectTracker } from "./vision/tracker.js";
 import { InferenceClient, SkipReason } from "./vision/inferenceClient.js";
 
 import { FreeSpaceEstimator } from "./perception/freeSpace.js";
+import { DistanceEstimator } from "./perception/distanceEstimator.js";
+import { StructuralDetector } from "./perception/structuralDetector.js";
 import { AdaptiveSegmentationController, GroundFreenessEstimator } from "./perception/segmentationStage.js";
 
 import { CorridorModel } from "./navigation/corridorModel.js";
@@ -111,6 +113,8 @@ class NavigationApp {
         this.tracker = new ObjectTracker();
         this.corridor = new CorridorModel();
         this.freeSpace = new FreeSpaceEstimator();
+        this.distance = new DistanceEstimator();
+        this.structural = new StructuralDetector();
         this.riskEngine = new RiskEngine();
         this.pathScores = new PathScoreEngine();
         this.decisions = new DecisionEngine();
@@ -359,6 +363,8 @@ class NavigationApp {
                 },
                 [RecoveryStep.REINITIALISE]: async () => {
                     this.tracker.clear();
+                    this.distance.reset();
+                    this.structural.reset();
                     this.decisions.reset();
                     const result = await this.inference.initialize();
                     return { ok: result.ok };
@@ -405,6 +411,8 @@ class NavigationApp {
         }
 
         this.tracker.clear();
+        this.distance.reset();
+        this.structural.reset();
         this.decisions.reset();
         this.quality.reset();
         this.sceneChange.reset();
@@ -440,6 +448,8 @@ class NavigationApp {
         // Everything temporal is stale after a pause; start clean rather than
         // reasoning from pre-pause geometry.
         this.tracker.clear();
+        this.distance.reset();
+        this.structural.reset();
         this.decisions.reset();
         this.sceneChange.reset();
         this.health.resetSession();
@@ -454,6 +464,8 @@ class NavigationApp {
         this.watchdog.stop();
         this.camera.stop();
         this.tracker.clear();
+        this.distance.reset();
+        this.structural.reset();
         this.decisions.reset();
         this.speech.cancelAll();
 
@@ -596,9 +608,10 @@ class NavigationApp {
 
         let sceneResult = this.lastSceneResult;
         let refinement = null;
+        let sample = null;
 
         if (this.inferenceCount % ANALYSIS_EVERY_N_INFERENCES === 0) {
-            const sample = this.pipeline.sampleLuminance(this.video);
+            sample = this.pipeline.sampleLuminance(this.video);
             if (sample) {
                 this.quality.update(sample.luma, sample.width, sample.height);
                 sceneResult = this.sceneChange.update(sample.luma, sample.width, sample.height);
@@ -638,12 +651,39 @@ class NavigationApp {
             });
         }
 
+        /**
+         * Structural detections (walls and barriers) are the one thing COCO
+         * cannot provide. They are produced from the same luminance thumbnail
+         * used by the quality and scene stages, then mapped into navigation
+         * space exactly like a model detection. Without this, a blank wall has
+         * no class and the app used to say "Path clear" while walking into it.
+         */
+        const structuralResult = this.structural.update(sample, { nowMs });
+        for (const detection of structuralResult.detections) {
+            const mapped = this.mapper.cameraToNavigation(detection.box);
+            if (mapped.fullyOutside) continue;
+            navDetections.push({
+                label: detection.label,
+                classId: detection.classId,
+                confidence: detection.confidence,
+                box: mapped.box,
+                visibility: mapped.visibility,
+                structural: true,
+                boundaryY: mapped.box[3],
+                structuralEvidence: detection.structuralEvidence
+            });
+        }
+
         /* --- tracking ---------------------------------------------------- */
 
         const capabilities = this.degradation.capabilities;
         const tracked = this.tracker.update(navDetections, nowMs, { trustTracks });
         this.lastTracks = tracked.tracks;
         this.health.setTrackingCount(tracked.tracks.length);
+
+        // Distances feed free space, risk and the object-ahead panel, so they
+        // must exist before any of those stages run.
+        this.distance.update(tracked.tracks, nowMs);
 
         /* --- corridor, free space, risk, path scores --------------------- */
 
@@ -961,6 +1001,8 @@ class NavigationApp {
             scheduler: this.scheduler.metrics(),
             tracking: this.tracker.metrics(),
             freeSpace: this.freeSpace.metrics(),
+            distance: this.distance.metrics(),
+            structural: this.structural.metrics(),
             pathScores: this.pathScores.metrics(),
             decision: this.decisions.metrics(),
             health: this.health.snapshot(),
@@ -1058,7 +1100,10 @@ class NavigationApp {
         const bounds = this.corridor.bounds;
         for (const track of tracks.slice(0, 6)) {
             const key = track.centerX < bounds.left ? "left" : (track.centerX > bounds.right ? "right" : "centre");
-            bySector[key].push(`${track.label} ${String(track.distanceCategory).toLowerCase().replace("_", " ")}`);
+            const distance = Number.isFinite(track.distanceMeters)
+                ? `about ${track.distanceMeters.toFixed(1)} metres`
+                : String(track.distanceCategory).toLowerCase().replace("_", " ");
+            bySector[key].push(`${track.label} ${distance}`);
         }
 
         const parts = [];
@@ -1097,6 +1142,13 @@ class NavigationApp {
         this.suspended = false;
         const ok = await this._prepareDetector();
         if (!ok) return;
+
+        // The benchmark may have held the detector for minutes; temporal state
+        // from before it is stale.
+        this.tracker.clear();
+        this.distance.reset();
+        this.structural.reset();
+        this.decisions.reset();
 
         if (this._wasAssisting) {
             this.watchdog.start();

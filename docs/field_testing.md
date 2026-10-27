@@ -70,6 +70,20 @@ order with an observer. Demo mode carries this list with pass/fail marking and a
 Then clear station 10 and confirm "Path clear." is spoken **once**, not
 repeatedly.
 
+### Wall and barrier check
+
+COCO has no wall class, so test structural hazards separately:
+
+1. Stand 2–3 m from a blank wall, facing it. The screen must say `WALL AHEAD`
+   (or `BARRIER AHEAD` for a narrow surface), with an estimated distance and
+   range. `CLEAR` or "Path clear." is a failure.
+2. Move to arm's length from the wall. The app must stop, and must not suggest a
+   sidestep.
+3. Point the camera at a one-row floor marking, a staircase, and the sky/horizon
+   in turn. None of these may produce a wall warning.
+4. Clear the wall and confirm "Path clear." is spoken only after the obstacle is
+   gone, not while it is still retained on screen.
+
 The same ten situations run headlessly as part of `npm test`
 (`js/testing/scenarios.js`). If the phone disagrees with the test suite,
 something is device-specific and worth investigating rather than shrugging at.
