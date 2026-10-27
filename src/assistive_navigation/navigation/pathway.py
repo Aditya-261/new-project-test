@@ -55,6 +55,10 @@ class PathwayAssessment:
     hazard_proximity: Optional[str] = None
 
 
+# Alias for convenience
+PathwayAdvice = PathwayAssessment
+
+
 class PathwayAnalyzer:
     """
     Evaluates walking corridors (Left, Center, Right) directly from the dense depth map.

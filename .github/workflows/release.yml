@@ -1,0 +1,65 @@
+name: Publish GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. v2.0.0)'
+        required: true
+        default: 'v2.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set Release Tag
+        id: vars
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            echo "TAG_NAME=${{ github.event.inputs.tag_name }}" >> $GITHUB_ENV
+          else
+            echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          fi
+
+      - name: Package Web Application (Mobile Ready)
+        run: |
+          cd src/assistive_navigation/web/static
+          zip -r ../../../../assistive-navigation-web.zip .
+          cd ../../../..
+
+      - name: Package Full Repository Distribution
+        run: |
+          zip -r assistive-navigation-full.zip . -x ".git/*" "*.pem"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: Vision Assistant ${{ env.TAG_NAME }}
+          draft: false
+          prerelease: false
+          body: |
+            ## 📱 Assistive Navigation System V2 (Mobile & Edge AI)
+
+            ### Live Mobile Testing
+            - **Web App URL (GitHub Pages)**: [Launch Vision Assistant](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/)
+            - Open the link on **Safari (iOS)** or **Chrome (Android)**.
+            - Tap **Start Camera** to begin real-time navigation and guidance.
+            - All inference runs directly on your phone using ONNX Runtime Web (WebGPU / WASM). No video leaves your device.
+
+            ### Release Assets Included
+            - `assistive-navigation-web.zip`: Standalone static web application bundle with client-side ONNX models (quantized uint8 + fp32).
+            - `assistive-navigation-full.zip`: Complete Python + Web edge navigation system source code.
+          files: |
+            assistive-navigation-web.zip
+            assistive-navigation-full.zip

@@ -64,6 +64,7 @@ from assistive_navigation.alerts.alert_manager import AlertManager
 from assistive_navigation.audio.queue         import SimpleAudioQueue
 from assistive_navigation.audio.tts           import TextToSpeech
 from assistive_navigation.visualization.debug_view import DebugView
+from assistive_navigation.navigation.pathway import PathwayAnalyzer, PathwayAdvice
 
 logger = get_logger(__name__, level="INFO")
 
@@ -94,6 +95,7 @@ class FrameResult:
     depth_latency_ms:    float
     total_latency_ms:    float
     pipeline_fps:        float
+    pathway_advice:      Optional[PathwayAdvice] = None
     error:               Optional[str] = None
 
 
@@ -149,6 +151,7 @@ class AssistiveNavigationPipeline:
         self._tts   = TextToSpeech(config)
         self._queue = SimpleAudioQueue(self._tts)
         self._alert = AlertManager(config, audio_queue=self._queue)
+        self._pathway = PathwayAnalyzer(config)
 
         self._debug = DebugView(config)
         if headless:
@@ -416,6 +419,14 @@ class AssistiveNavigationPipeline:
         alert_issued = bool(alert_result and alert_result.alert_issued)
         alert_text   = alert_result.alert_text if alert_result else ""
 
+        # ── 10b. Dense Pathway Corridor Guidance ─────────────────────────────
+        pathway_advice = None
+        if depth_available and depth_map is not None:
+            try:
+                pathway_advice = self._pathway.analyze(depth_map, confirmed_objects=confirmed)
+            except Exception as e:
+                logger.warning("Pathway analyzer error: %s", e)
+
         # ── 11. Debug visualization ──────────────────────────────────────────
         quit_requested = False
         if self._debug.is_enabled:
@@ -470,6 +481,7 @@ class AssistiveNavigationPipeline:
             depth_latency_ms=depth_ms,
             total_latency_ms=total_ms,
             pipeline_fps=self._perf.fps,
+            pathway_advice=pathway_advice,
             error="quit_requested" if quit_requested else None,
         )
 
